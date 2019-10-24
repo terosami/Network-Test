@@ -2,7 +2,7 @@
 #Beschreibung
 # Script für Randome Ping Test
 #by Gregor holzfeind <gholzfeind@heiniger-ag.ch>
-#Version: 0.2
+#Version: 0.3
 #Datum: 2018-04-16
 
 #History
@@ -14,6 +14,8 @@
 #	* Sleep mit Fortschrittsbalken erweitert
 #	* Funktionstest mit Dauer
 #	* Ping mit Fortschrittsbalken erweitert
+# 0.3 2019.10.24
+#	* Default IP auf Gateway umgestellt
 
 
 # Funktionen
@@ -82,7 +84,8 @@ function func_start() {
 			time_r=$(echo "$time_r * 60 + $time_s" | bc)
 			;;
 	esac
-	ip_add=$(whiptail --inputbox "Bitte IP-Adresse angegebn" 8 78 192.168.1.1 --backtitle "Ping-Performant-Test" 3>&1 1>&2 2>&3)
+	ip_addr=$(ip route  | grep "default" | awk '{print $3}')
+	ip_add=$(whiptail --inputbox "Bitte IP-Adresse angegebn" 8 78 $ip_addr --backtitle "Ping-Performant-Test" 3>&1 1>&2 2>&3)
 	exitstatus=$?
 			if [ $exitstatus != 0 ]
 			then
