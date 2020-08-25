@@ -1,0 +1,144 @@
+#!/bin/bash
+
+##########################################################################################
+#Script Name    : net_scann_geo                                                          #
+#Description    : Bashscript for GEO-IP analysis with tshark                             #
+#Args           : -n -o -h -m -u                                                         #
+#Author         : Gregor Holzfeind und Kai Schmid                                        #
+#Email          : gregor@holzfeind.ch                                                    #
+#License        : GNU General Public License v3.0                                        #
+#Version        : 0.5                                                                    #
+##########################################################################################
+
+#Variable not editabel
+var_mmdblookup="/usr/bin/mmdblookup"
+var_geoip_datebase="GeoLite2-Country.mmdb"
+var_tshark="/usr/bin/tshark"
+var_time_scann="30"
+var_tshark_file_tmp="/tmp/thsark.$$"
+var_interface=$(ip addr | grep "2:" | awk '{print $2}' | cut -d":" -f1)
+var_local_ip=$(ip add | grep "$var_interface" | grep "inet" | awk '{print $2}' | cut -d"/" -f1)
+
+#Function
+function func_check() {
+	if [[ ! -x $var_mmdblookup ]]; then
+		printf  "Programs \"libmaxminddb0 libmaxminddb-dev mmdb-bin\" are not install\nPlease install \"libmaxminddb0 libmaxminddb-dev mmdb-bin\""
+		exit
+	fi
+	if [[ ! -x $var_tshark ]]; then
+ 		printf  "Program \"tshark\" is not install\nPlease install \"tshark\""
+		exit
+	fi
+	if [ "$EUID" -ne 0 ]; then 
+		echo "Please run as root"
+		exit
+	fi
+}
+
+function func_check_input() {
+	var_check_interface=$(ip addr | grep "$var_interface")
+	if [[ -z "$var_check_interface" ]]
+	then
+		printf  "Interface: \"$var_interface\" not found\nPlease correkt this"
+		exit
+	fi
+	if [[ -z "$var_tshark_file_report" ]]
+	then
+		printf "No outputfile\n\Please give a outputfile"
+		exit
+	fi
+}
+
+function func_scann() {
+	touch $var_tshark_file_tmp
+	case $var_tshark_option in
+		i) tshark -i "$var_interface" -a duration:"$var_time_scann" -J tcp -Y $"ip.dst == $var_local_ip" >"$var_tshark_file_tmp" ;;
+		o) tshark -i "$var_interface" -a duration:"$var_time_scann" -J tcp -Y $"ip.src == $var_local_ip" > "$var_tshark_file_tmp" ;;
+		*) tshark -i "$var_interface" -a duration:"$var_time_scann" -J tcp > "$var_tshark_file_tmp" ;;
+	esac
+	func_anayls
+ }
+ 
+ function func_anayls() {
+ 	while read input
+ 	do
+ 		touch "$var_tshark_file_report"
+ 		var_print_ip_src=$(echo "$input "| awk '{print $3}')
+		var_print_ip_dst=$(echo "$input" | awk '{print $5}')
+		var_check_ip_src=$(grep "$var_print_ip_src" "$var_tshark_file_report")
+		var_check_ip_dst=$(grep "$var_print_ip_dst" "$var_tshark_file_report")
+		if [[ -z "$var_check_ip_src" ]]
+		then
+			var_ip_part_1=$(echo "$var_print_ip_src" | cut -d"." -f 1)
+			var_ip_part_2=$(echo "$var_print_ip_src" | cut -d"." -f 2)
+			if [[ "$var_ip_part_1" =~ ^[0-9]{1,3} ]]
+			then
+				if { [ "$var_ip_part_1" -eq "192" ] && [ "$var_ip_part_2" -eq "168" ]; } || { [ "$var_ip_part_1" -eq "172" ] && { [ "$var_ip_part_2" -ge "16" ] && [ "$var_ip_part_2" -le "31" ]; }; } || [[ "$var_ip_part_1" -eq "10"  ]]
+				then
+					var_number=$(grep -c "$var_print_ip_src" "$var_tshark_file_tmp")
+					echo "$var_print_ip_src;local;$var_number" >> "$var_tshark_file_report"
+				else
+					var_ip_check="$var_print_ip_src"
+					func_public_ip
+					var_number=$(grep -c "$var_print_ip_src" "$var_tshark_file_tmp")
+					echo "$var_print_ip_src;$var_conuntry;$var_number" >> "$var_tshark_file_report"
+					sleep 5
+				fi
+			fi
+		fi
+		if [[ -z  "$var_check_ip_dst" ]]
+		then
+			var_ip_part_1=$(echo "$var_print_ip_dst" | cut -d"." -f 1)
+			var_ip_part_2=$(echo "$var_print_ip_dst" | cut -d"." -f 2)
+			if [[ "$var_ip_part_1" =~ ^[0-9]{1,3} ]]
+			then
+				if { [ "$var_ip_part_1" -eq "192" ] && [ "$var_ip_part_2" -eq "168" ]; } || { [ "$var_ip_part_1" -eq "172" ] && { [ "$var_ip_part_2" -eq "16" ] && [ "$var_ip_part_2" -eq "31" ]; }; } || [[ "$var_ip_part_1" -eq "10"  ]]
+				then
+					var_number=$(grep -c "$var_print_ip_dst" "$var_tshark_file_tmp")
+					echo "$var_print_ip_dst;local;$var_number" >> "$var_tshark_file_report"
+				else
+					var_ip_check="$var_print_ip_dst"
+					func_public_ip
+					var_number=$(grep -c "$var_print_ip_dst" "$var_tshark_file_tmp")
+					echo "$var_print_ip_dst;$var_conuntry;$var_number" >> "$var_tshark_file_report"
+				fi
+			fi
+		fi
+	done < $var_tshark_file_tmp
+	rm $var_tshark_file_tmp
+}
+
+function func_public_ip() {
+	var_conuntry=$(mmdblookup --file "$var_geoip_datebase" --ip "$var_ip_check" country names en | cut -d'"' -f2 | tail -n2 | head -n1)
+}
+
+
+function func_help() {
+	echo -e "Usage: net_scann [OPTIONS]\n\
+Options:\n\
+  -i	Network Interface
+  			like ens33, default preferd route-interface
+  -t	Scann Time in seconds
+  			Time to Scan in seconds (default 30 seconds)
+  -f	Filter
+     i		onyl Input-Traffic
+     o		onyl Output-Traffic
+  -h      This Help"
+	exit
+}
+
+#Program
+func_check
+while getopts f:hi:o:t: opt 2>/dev/null
+do
+	case $opt in
+		i) var_interface=$OPTARG;;
+		t) var_time_scann=$OPTARG;;
+		f) var_tshark_option=$OPTARG;;
+		o) var_tshark_file_report=$OPTARG;;
+		h) func_help;;
+		*) func_help;;
+	esac
+done
+func_check_input
+func_scann
