@@ -96,7 +96,7 @@ function func_precheck() {
 		exit
 	fi
 	unset _check_iw _check_iwgetid _check_iwconfig
-	# Überprüfen ob der Rechner installiert ist
+	# Überprüfen ob bc installiert ist
 	local _check_bc=$(which bc)
 	if [ "$_check_bc" = "" ]
 	then
@@ -104,6 +104,8 @@ function func_precheck() {
 		echo 'Bitte dieses Programm via "sudo apt install bc" installieren'
 		exit
 	fi
+	unset _check_bc
+	# Überprüfen ob wget installiert ist
 	local _check_wget=$(which wget)
 	if [ "$_check_wget" = "" ]
 	then
@@ -111,6 +113,16 @@ function func_precheck() {
 		echo 'Bitte dieses Programm via "sudo apt install wget" installieren'
 		exit
 	fi
+	unset _check_wget
+	# Überprüfen ob curl installiert ist
+	local _check_curl=$(which curl)
+	if [ "$_check_curl" = "" ]
+	then
+		echo 'Das Programe "curl" fehlt!'
+		echo 'Bitte dieses Programm via "sudo apt install curl" installieren'
+		exit
+	fi
+	unset _check_curl
 	_DATA=$(date +"%x %T")
 }
 
