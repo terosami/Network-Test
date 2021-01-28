@@ -55,7 +55,8 @@ _out_screen_speed="" # Ausgabe für Screen Speed
 # Sonstige Variabel #
 #####################
 _speed_rel="" # gemessener Speed
-_hw_wlan_test="" # 
+_speed_dummy="100MB.dummy"
+_hw_wlan_test="" # zur Überprüfung der Eingabe
 
 ################
 ### Function ###
@@ -188,22 +189,35 @@ function func_info() {
 
 function func_speed() {
 	whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
-	--gauge "Geschwindigkeitstest 1 von 3 wird durchführt" 8 78 0 &
+	--gauge "Geschwindigkeitstest 1 von 5 wird durchführt" 8 78 0 &
 	wget -O /dev/null "https://speed.hetzner.de/100MB.bin" --bind-address "$_wlan_ip" 2> speed1.$$ # Speedmessung 1
 	whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
-	--gauge "Geschwindigkeitstest 2 von 3 wird durchführt" 8 78 33 &
+	--gauge "Geschwindigkeitstest 2 von 5 wird durchführt" 8 78 20 &
 	wget -O /dev/null "http://speedtest.tele2.net/100MB.zip" --bind-address "$_wlan_ip" 2> speed2.$$ # Speedmessung 2
 	whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
-	--gauge "Geschwindigkeitstest 3 von 3 wird durchführt" 8 78 66 &
+	--gauge "Geschwindigkeitstest 3 von 5 wird durchführt" 8 78 40 &
 	wget -O /dev/null "http://speedtest.london.linode.com/100MB-london.bin" --bind-address "$_wlan_ip" 2> speed3.$$ # Speedmessung 3
 	local _speed1_nr=$(tail -n2 speed1.$$ | head -n1  | cut -d"(" -f2 | awk '{ print $1 }')
 	local _speed2_nr=$(tail -n2 speed2.$$ | head -n1  | cut -d"(" -f2 | awk '{ print $1 }')
 	local _speed3_nr=$(tail -n2 speed3.$$ | head -n1  | cut -d"(" -f2 | awk '{ print $1 }')
 	_speed_rel=$(echo "scale=2 ; ($_speed1_nr + $_speed2_nr + $_speed3_nr) / 3 "| bc ) # Berechnung Durschnittsgeschwindigkeit
+	whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
+	--gauge "Geschwindigkeitstest 4 von 5 wird durchführt" 8 78 60 &
 	_ping=$(ping -I "$_HW_WLAN" 8.8.8.8 -c4 | grep "rtt" | cut -d"/" -f5)
-	_out_screen_speed="Speeed:           $_speed_rel MB/s \n    avg. Ping :       $_ping ms"
-	unset _speed1_nr _speed2_nr _speed3_nr
-	rm speed1.$$ speed2.$$ speed3.$$
+	if [ ! -f "$_speed_dummy" ] # Überprüfung ob die Dummy-Datei vorhanden ist
+	then
+		dd if=/dev/zero of="$_speed_dummy" bs=1M count=100 # Dummy-Datei erstellen
+	fi
+	whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
+	--gauge "Geschwindigkeitstest 5 von 5 wird durchführt" 8 78 80 &
+	curl -T "$_speed_dummy" ftp://speedtest.tele2.net/upload/ --silent --write-out '%{time_starttransfer},%{time_total}' --interface "$_HW_WLAN" > speed4.$$ # Uploadtest
+	local _speed_up_start=$(cut -d"," -f1 speed4.$$)
+	local _speed_up_end=$(cut -d"," -f2 speed4.$$)
+	local _speed_up_total=$(echo "scale=2; $_speed_up_end - $_speed_up_start"| bc)
+	_speed_down=$(echo 'scale=2;'"(104857600 / $_speed_up_total) *8 / 1024 / 1024 / 8 " | bc -l) # Berechnung des Upload
+	_out_screen_speed="Speeed:           $_speed_rel MB/s \n    Upload:           $_speed_down MB/s\n    avg. Ping :       $_ping ms"
+	unset _speed1_nr _speed2_nr _speed3_nr _speed_up_start _speed_up_end  _speed_up_total 
+	rm speed1.$$ speed2.$$ speed3.$$ speed4.$$
 }
 
 #################
@@ -230,8 +244,7 @@ $_out_screen_wlan \
    $_out_screen_speed \
 
 \n\n\
-Ausgeführt am $_DATA"\
-	25 78
+Ausgeführt am $_DATA" 25 78
 	func_end
 )
 
