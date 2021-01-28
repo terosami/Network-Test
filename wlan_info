@@ -1,0 +1,333 @@
+#!/bin/bash
+
+###############################################
+# Name:        wlan_info                      #
+# Description: Script for WLAN Information    #
+# Authors:     Gregor Holzfeind, Claudia Näf, #
+#              Kai Schmide, Dritan Shehu      #
+# Copy-Right:  GNU-GPLv3                      #
+# Version:     0.6                            #
+###############################################
+
+################
+### Variabel ###
+################
+
+##################
+# Globe Variabel #
+##################
+
+_HW_WLAN="" # Hardwarename des WLAN-Modul
+_WHIPTAIL_BACK="WLAN-Analyser v0.6" # Backtitel Whiptail"
+_DATA="" # aktuelles Datum
+_DATE_FILE="" # Datum für Dateien
+TERM=linux # Einstellung für whiptail
+
+##############################
+# WLAN Informations Variabel #
+##############################
+_wlan_ssid="" # SSID
+_wlan_frq="" #Frequenzband
+_wlan_channel="" # Kanal
+_wlan_channel_withd="" # Kanalbreite
+_wlan_signal="" # Signalstärke
+_wlan_ap="" # MAC-Adresse Access Point
+_wlan_speed="" # Geschwindkeit der WLAN Verbindung
+_wlan_generation="" # WLAN Generation
+_wlan_mcs="" # MCS-Wert der Verbindung
+_wlan_gi="" # Guardinterval
+_wlan_noise="" # Hintergrundrauschen
+
+####################
+# Options Variabel #
+####################
+_func_inter="false" # Interaktive Durchführung
+_func_speed="false" # Speedmessung
+_out_form="screen" # Ausgabe der Resultate
+
+###################
+# Output Variabel #
+###################
+_out_screen_wlan="" # Ausgabe für Screen WLAN
+_out_screen_speed="" # Ausgabe für Screen Speed
+
+#####################
+# Sonstige Variabel #
+#####################
+_speed_rel="" # gemessener Speed
+_hw_wlan_test="" # 
+
+################
+### Function ###
+################
+
+##################
+# Vorüberprüfung #
+##################
+
+function func_precheck() {
+	# Überprüfen ob eine WLAN-Adapter vorhanden ist
+	local _check_wlan=$(wc -l /proc/net/wireless | cut -d" " -f1)
+	if [ $_check_wlan -le 2 ]
+	then
+		echo "Es ist kein WLAN-Adapter verbunden"
+		echo "Bitte einen WLAN-Adapter verbinden und das Programm neustarten."
+		exit
+	fi
+	unset _check_wlan
+	# Überprüfen ob das Programm whiptail installiert ist
+	local _check_whiptail=$(which whiptail)
+	if [ "$_check_whiptail" = "" ]
+	then
+		echo 'Das Programm "whiptail" fehlt!'
+		echo 'Bitte dieses Programm via "sudo apt install whiptail" installieren'
+		exit
+	fi
+	unset _check_whiptail
+	# Überprüfen ob die WLAN-Tools vorhanden sind"
+	local _check_iwgetid=$(which iwgetid)
+	local _check_iw=$(which iw)
+	local _check_iwconfig=$(which iwconfig)
+	if [ "$_check_iw" = "" ] || [ "$_check_iwgetid" = "" ] || [ "$_check_iwconfig" = "" ]
+	then
+		echo "Die WLAN-Programe fehlen!"
+		echo 'Bitte diese Programm via "sudo apt install iw" installieren'
+		exit
+	fi
+	unset _check_iw _check_iwgetid _check_iwconfig
+	# Überprüfen ob der Rechner installiert ist
+	local _check_bc=$(which bc)
+	if [ "$_check_bc" = "" ]
+	then
+		echo 'Das Programe "bc" fehlt!'
+		echo 'Bitte dieses Programm via "sudo apt install bc" installieren'
+		exit
+	fi
+	local _check_wget=$(which wget)
+	if [ "$_check_wget" = "" ]
+	then
+		echo 'Das Programe "wget" fehlt!'
+		echo 'Bitte dieses Programm via "sudo apt install wget" installieren'
+		exit
+	fi
+	_DATA=$(date +"%x %T")
+}
+
+#####################
+# Begleiteter Modus #
+#####################
+
+function func_start () { #Sammlung der Infos für die Messung
+	whiptail --title "Willkommen" --backtitle "$_WHIPTAIL_BACK" \
+	--infobox "Es werden nun verschiede Information für die Bedinung abgefragt." 8 78 # Willkommensbildschirm
+	sleep 3
+	local _number_wireless=$(wc -l /proc/net/wireless | awk '{ print $1 }') #WLAN Antennen ermitteln
+	if [ "$_number_wireless" -ge 4 ]
+	then
+		echo "auswahl"
+	else
+		_HW_WLAN=$(sed -n '3p' /proc/net/wireless | awk '{ print $1 }' | cut -d":" -f1)
+	fi
+	unset _number_wireless
+	# Abfrage eines Speedtest
+	if [ "$_func_speed" = "false" ]
+		then
+		if (whiptail --title "Geschwindkeitsmessung" --backtitle "$_WHIPTAIL_BACK" --yesno "Eine Geschwindigkeitstest mit Extern durchführen?." 8 78)
+		then
+			_func_speed="true"
+		else
+			_func_speed="false"
+		fi
+	fi
+	_out_form=$(whiptail  --title "Ausgabe" --backtitle "$_WHIPTAIL_BACK"  --radiolist "Bitte Wählen Sie eine Ausgabe" 20 78 3 "screen" "Auf dem Bildschirm" ON   "html" "html-Datei" OFF "csv" "CSV-Datei" OFF 3>&1 1>&2 2>&3)
+	exitstatus=$?
+    if [ $exitstatus != 0 ]
+    then
+        func_cancel
+    fi
+	func_info
+}
+
+####################
+# WLAN Information #
+####################
+
+function func_info() {
+	_wlan_ip=$(ip address show dev "$_HW_WLAN" | grep "inet " | awk '{ print $2 }' | cut -d"/" -f1) # IP-Address WLAN-Interface
+	_wlan_ssid=$(iwconfig "$_HW_WLAN"  | grep "SSID" | awk '{ print $4 }' | cut -d'"' -f2) # SSID ermitteln
+	_wlan_channel=$(iwgetid -cr "$_HW_WLAN") # Kanal ermitteln
+	if [ "$_wlan_channel" -le 13 ] # Band ermitteln
+	then
+		_wlan_frq="2.4 GHz"
+	else
+		_wlan_frq="5 GHz"
+	fi
+	_wlan_channel_withd=$(iw dev "$_HW_WLAN" info | grep "width" | awk '{ print $6 }') #Kanalbreite ermitteln
+	_wlan_signal=$(iwconfig "$_HW_WLAN" | grep "Signal" | cut -d"=" -f3) # Signalstärke ermitteln
+	_wlan_ap=$(iwgetid -ar "$_HW_WLAN" ) # Access Point ermitteln
+	_wlan_speed=$(iwconfig "$_HW_WLAN" | grep "Bit" | awk '{ print $2 " " $3 }' | cut -d"=" -f2) # Geschwindkeit ermitteln
+	local _wlan_gen_tmp=$(iw dev "$_HW_WLAN" | grep "tx" | awk '{ print $5 }') #Hilfestellung zu Standart ermittlung
+	case "$_wlan_gen_tmp" in
+		MCS) _wlan_generation="N";;
+		VHT-MSC) _wlan_generation="AC/AX";;
+		*) _wlan_generation="Legacy";;
+	esac
+	unset _wlan_gen_tmp
+	if [ "$_wlan_generation" == "N" ] || [ "$_wlan_generation" == "AC/AX" ]
+	then
+		_wlan_mcs=$(iw dev "$_HW_WLAN" | grep "tx" | awk '{ print $6 }')
+		_wlan_gi=$(iw dev "$_HW_WLAN" | grep "tx" | awk '{ print $8 }')
+		_out_screen_wlan="MCS-Wert:         $_wlan_mcs \n    Guardinterval:    $_wlan_gi\n"
+	fi
+	_wlan_noise=$(grep "$_HW_WLAN" /proc/net/wireless | awk '{ print $5 }') # Rauschen ermitteln
+}
+
+################
+# Speedmessung #
+################
+
+function func_speed() {
+	whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
+	--gauge "Geschwindigkeitstest 1 von 3 wird durchführt" 8 78 0 &
+	wget -O /dev/null "https://speed.hetzner.de/100MB.bin" --bind-address "$_wlan_ip" 2> speed1.$$ # Speedmessung 1
+	whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
+	--gauge "Geschwindigkeitstest 2 von 3 wird durchführt" 8 78 33 &
+	wget -O /dev/null "http://speedtest.tele2.net/100MB.zip" --bind-address "$_wlan_ip" 2> speed2.$$ # Speedmessung 2
+	whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
+	--gauge "Geschwindigkeitstest 3 von 3 wird durchführt" 8 78 66 &
+	wget -O /dev/null "http://speedtest.london.linode.com/100MB-london.bin" --bind-address "$_wlan_ip" 2> speed3.$$ # Speedmessung 3
+	local _speed1_nr=$(tail -n2 speed1.$$ | head -n1  | cut -d"(" -f2 | awk '{ print $1 }')
+	local _speed2_nr=$(tail -n2 speed2.$$ | head -n1  | cut -d"(" -f2 | awk '{ print $1 }')
+	local _speed3_nr=$(tail -n2 speed3.$$ | head -n1  | cut -d"(" -f2 | awk '{ print $1 }')
+	_speed_rel=$(echo "scale=2 ; ($_speed1_nr + $_speed2_nr + $_speed3_nr) / 3 "| bc ) # Berechnung Durschnittsgeschwindigkeit
+	_ping=$(ping -I "$_HW_WLAN" 8.8.8.8 -c4 | grep "rtt" | cut -d"/" -f5)
+	_out_screen_speed="Speeed:           $_speed_rel MB/s \n    avg. Ping :       $_ping ms"
+	unset _speed1_nr _speed2_nr _speed3_nr
+	rm speed1.$$ speed2.$$ speed3.$$
+}
+
+#################
+# Output Screen #
+#################
+
+function func_out_screen() (
+	whiptail --title "Informationen" --backtitle "$_WHIPTAIL_BACK" \
+	--msgbox \
+	"Basisinformationen \n\
+    SSID:             $_wlan_ssid \n\
+    Band:             $_wlan_frq \n\
+    Kanal:            $_wlan_channel \n\
+    Kanalbreite:      $_wlan_channel_withd \n\
+    Signalstärke:     $_wlan_signal \n\
+    IP-Address:       $_wlan_ip \n\
+\n\
+Zusatzinformationen \n\
+    Rauschen:         $_wlan_noise dBm\n\
+    Access Point:     $_wlan_ap \n\
+    max. Speeed:      $_wlan_speed \n\
+    Generation:       $_wlan_generation \n\
+$_out_screen_wlan \
+   $_out_screen_speed \
+
+\n\n\
+Ausgeführt am $_DATA"\
+	25 78
+	func_end
+)
+
+##########
+# Abruch #
+##########
+
+function func_cancel() {
+    whiptail --infobox "Das Programm wurde abgebrochen\nEs werden alle vorhanden Daten gelöscht." --backtitle "$_WHIPTAIL_BACK"   8 78
+    sleep 5
+	func_end
+}
+
+#########
+# Hilfe #
+#########
+
+function func_help() {
+	echo "WLAN-Analyser"
+	echo ""
+	echo "Ausführung:"
+	echo "  ./wlan_info.sh [OPTION] "
+	echo ""
+	echo "Beispiel: "
+	echo " ./wlan_info -i"
+	echo " ./wlan_info"
+	echo ""
+	echo "OPTION"
+	echo "  -h  Hilfe, dieser Text"
+	echo "  -i  Interaktive Version"
+	echo '  -o  [screen (Default), html, csv], Ausgabe des Ergebniss'
+	echo "  -s  Speedmessung nach Extern durchführen"
+	echo "  -w  [Adaptername], WLAN-Adapter festlegen"
+}
+
+########
+# Ende #
+########
+
+function func_end() {
+	unset _HW_WLAN _WHIPTAIL_BACK _DATA _DATE_FILE
+	unset _wlan_ssid _wlan_channel _wlan_channel_withd _wlan_signal _wlan_ap _wlan_speed _wlan_generation _wlan_mcs _wlan_gi
+	unset _func_inter _func_speed _out_form
+	unset _out_screen_wlan _out_screen_speed
+	unset _speed_rel
+	clear
+	exit
+}
+
+############
+### Main ###
+############
+
+func_precheck
+
+while getopts "o:w:ihs" opt; do
+	case ${opt} in
+		h) func_help; exit 1;;
+		i) _func_inter="true";;
+		s) _func_speed="true";;
+		w) _HW_WLAN="$OPTARG";;
+		o) _out_form="$OPTARG";;
+		\?) echo " Unbekannte Option" >&2; echo ""; echo 'Mehr Informationen via "./wlan_info.sh -h"'; exit 1;;
+		:) echo "Keine Option angegeben" >&2; echo ""; func_help; exit 1;;
+		*) func_help; exit 1;;
+	esac
+done
+
+if [ ! -z "$_HW_WLAN" ] # Überprüfen ob eine Netzwerkarte angegeben ist
+then
+	_hw_wlan_test=$(grep "$_HW_WLAN" /proc/net/wireless) # Netzwerkarte suche
+	if [ "$_hw_wlan_test" = "" ] # Feedback über nicht gefunden Netzwerkarte
+	then
+		whiptail --msgbox "Die Netzwerkarte wurde nicht gefunden.\nHier Wert: $_HW_WLAN" --backtitle "$_WHIPTAIL_BACK"   8 78
+		func_end
+	fi
+	unset _hw_wlan_test
+elif [ "$_HW_WLAN" = "" ] && [ "$_func_inter" = "false" ] # Bei nicht interaktive Vorgehen ohne Netzwerkkarte
+then
+	_HW_WLAN=$(sed -n '3p' /proc/net/wireless | awk '{ print $1 }' | cut -d":" -f1)
+fi
+
+if [ "$_func_inter" == "true" ] # Überprüfen ob interaktive Geführt werden soll
+then
+	func_start
+else
+	func_info
+fi
+
+if [ "$_func_speed" == "true" ] # Überprüfen ob ein Speedtest durchführt werden soll.
+then
+	func_speed
+fi
+
+case $_out_form in # Entscheidung der Ausgabe
+	screen) func_out_screen ;;
+	html) echo "HTML Ausgabe";;
+	csv) echo "csv Ausgabe";;
+esac
