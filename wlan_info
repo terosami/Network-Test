@@ -6,7 +6,7 @@
 # Authors:     Gregor Holzfeind, Claudia Näf, #
 #              Kai Schmide, Dritan Shehu      #
 # Copy-Right:  GNU-GPLv3                      #
-# Version:     0.6                            #
+# Version:     0.7.0                          #
 ###############################################
 
 ################
@@ -18,7 +18,7 @@
 ##################
 
 _HW_WLAN="" # Hardwarename des WLAN-Modul
-_WHIPTAIL_BACK="WLAN-Analyser v0.6" # Backtitel Whiptail"
+_WHIPTAIL_BACK="WLAN-Analyser v0.7.0" # Backtitel Whiptail"
 _DATA="" # aktuelles Datum
 _DATE_FILE="" # Datum für Dateien
 TERM=linux # Einstellung für whiptail
@@ -54,7 +54,8 @@ _out_screen_speed="" # Ausgabe für Screen Speed
 #####################
 # Sonstige Variabel #
 #####################
-_speed_rel="" # gemessener Speed
+_speed_rel="" # Gemessener Downspeed
+_speed_up="" # Gemessener Uploadspeed
 _speed_dummy="100MB.dummy"
 _hw_wlan_test="" # zur Überprüfung der Eingabe
 
@@ -179,18 +180,28 @@ function func_info() {
 	_wlan_signal=$(iwconfig "$_HW_WLAN" | grep "Signal" | cut -d"=" -f3) # Signalstärke ermitteln
 	_wlan_ap=$(iwgetid -ar "$_HW_WLAN" ) # Access Point ermitteln
 	_wlan_speed=$(iwconfig "$_HW_WLAN" | grep "Bit" | awk '{ print $2 " " $3 }' | cut -d"=" -f2) # Geschwindkeit ermitteln
-	local _wlan_gen_tmp=$(iw dev "$_HW_WLAN" | grep "tx" | awk '{ print $5 }') #Hilfestellung zu Standart ermittlung
-	case "$_wlan_gen_tmp" in
-		MCS) _wlan_generation="N";;
-		VHT-MSC) _wlan_generation="AC/AX";;
-		*) _wlan_generation="Legacy";;
-	esac
+	local _wlan_gen_tmp=$(iw dev "$_HW_WLAN" link | grep "tx" | awk '{ print $5 }') #Hilfestellung zu Standart ermittlung
+	if [ "$_wlan_gen_tmp" = "MCS" ]
+	then
+		_wlan_generation="N"
+	elif [ "$_wlan_gen_tmp" = "VHT-MCS" ]
+	then
+		_wlan_generation="AC/AX"
+	else
+		_wlan_generation="Legacy"
+	fi
 	unset _wlan_gen_tmp
 	if [ "$_wlan_generation" == "N" ] || [ "$_wlan_generation" == "AC/AX" ]
 	then
-		_wlan_mcs=$(iw dev "$_HW_WLAN" | grep "tx" | awk '{ print $6 }')
-		_wlan_gi=$(iw dev "$_HW_WLAN" | grep "tx" | awk '{ print $8 }')
-		_out_screen_wlan="MCS-Wert:         $_wlan_mcs \n    Guardinterval:    $_wlan_gi\n"
+		_wlan_mcs=$(iw dev "$_HW_WLAN" link | grep "tx" | awk '{ print $6 }')
+		local _wlan_gi_tmp=$(iw dev "$_HW_WLAN" link | grep "tx" | awk '{ print $8 }')
+		if [ "$_wlan_gi_tmp" = "short" ]
+		then
+			_wlan_gi="0,4µs"
+		else
+			_wlan_gi="0,8µs"
+		fi
+		_out_screen_wlan="    MCS-Wert:         $_wlan_mcs \n    Guardinterval:    $_wlan_gi\n"
 	fi
 	_wlan_noise=$(grep "$_HW_WLAN" /proc/net/wireless | awk '{ print $5 }') # Rauschen ermitteln
 }
@@ -226,8 +237,8 @@ function func_speed() {
 	local _speed_up_start=$(cut -d"," -f1 speed4.$$)
 	local _speed_up_end=$(cut -d"," -f2 speed4.$$)
 	local _speed_up_total=$(echo "scale=2; $_speed_up_end - $_speed_up_start"| bc)
-	_speed_down=$(echo 'scale=2;'"(104857600 / $_speed_up_total) *8 / 1024 / 1024 / 8 " | bc -l) # Berechnung des Upload
-	_out_screen_speed="Speeed:           $_speed_rel MB/s \n    Upload:           $_speed_down MB/s\n    avg. Ping :       $_ping ms"
+	_speed_up=$(echo 'scale=2;'"(104857600 / $_speed_up_total) *8 / 1024 / 1024 / 8 " | bc -l) # Berechnung des Upload
+	_out_screen_speed="Speeed:           $_speed_rel MB/s \n    Upload:           $_speed_up MB/s\n    avg. Ping :       $_ping ms"
 	unset _speed1_nr _speed2_nr _speed3_nr _speed_up_start _speed_up_end  _speed_up_total 
 	rm speed1.$$ speed2.$$ speed3.$$ speed4.$$
 }
@@ -259,6 +270,51 @@ $_out_screen_wlan \
 Ausgeführt am $_DATA" 25 78
 	func_end
 )
+
+####################
+# Output CSV-Datei #
+####################
+
+function func_out_csv() {
+	local _out_csv_file=$(date +"%Y_%m_%d_%H_%M.csv")
+	if [ -n "$_out_csv_file" ]
+	then
+		if [ "$_out_screen_speed" = "" ]
+		then
+			local _out_csv_header_speed=""
+			local _out_csv_speed="false"
+		else
+			local _out_csv_header_speed="Downspeed;Upspeed;avg. Ping"
+			local _out_csv_speed="true"
+		fi
+		if [ "$_out_screen_wlan" = "" ]
+		then
+			local _out_csv_header_wlan=""
+			local _out_csv_wlan="false"
+		else
+			local _out_csv_header_wlan="MCS-Wert;Guardinterval"
+			local _out_csv_wlan="true"
+		fi
+		echo "Datum;Zeit;SSID;Band;Kanal;Kanalbreite:Signalstärke;IP-Address;Rauschen;Access Pont;max. Speed;Generation$out_csv_header_wlan;$_out_csv_header_speed" > $_out_csv_file
+	fi
+	local _date_csv=$(date +"%d.%m.%Y;%H:%M")
+	if [ "$_out_csv_speed" = "false" ] && [ "$_out_csv_wlan" = "false" ]
+	then
+		echo "$_date_csv;$_wlan_ssid;$_wlan_frq;$_wlan_channel;$_wlan_channel_withd;$_wlan_signal;$_wlan_ip;$_wlan_noise dBm;$_wlan_ap;$_wlan_speed;$_wlan_generation" >> $_out_csv_file
+	elif [ "$_out_csv_speed" = "true" ] && [ "$_out_csv_wlan" = "false" ]
+	then
+		echo "$_date_csv;$_wlan_ssid;$_wlan_frq;$_wlan_channel;$_wlan_channel_withd;$_wlan_signal;$_wlan_ip;$_wlan_noise dBm;$_wlan_ap;$_wlan_speed;$_wlan_generation;$_speed_rel MB/s;$_speed_up MB/s;$_ping ms" >> $_out_csv_file
+	elif [ "$_out_csv_speed" = "false" ] && [ "$_out_csv_wlan" = "true" ]
+	then
+		echo "$_date_csv;$_wlan_ssid;$_wlan_frq;$_wlan_channel;$_wlan_channel_withd;$_wlan_signal;$_wlan_ip;$_wlan_noise dBm;$_wlan_ap;$_wlan_speed;$_wlan_generation;$_wlan_mcs;$_wlan_gi" >> $_out_csv_file
+	elif [ "$_out_csv_speed" = "true" ] && [ "$_out_csv_wlan" = "true" ]
+	then
+		echo "$_date_csv;$_wlan_ssid;$_wlan_frq;$_wlan_channel;$_wlan_channel_withd;$_wlan_signal;$_wlan_ip;$_wlan_noise dBm;$_wlan_ap;$_wlan_speed;$_wlan_generation;$_wlan_mcs;$_wlan_gi;$_speed_rel MB/s;$_speed_up MB/s;$_ping ms" >> $_out_csv_file
+	fi
+	whiptail --msgbox "Die CSV-Datei wurde geschrieben\nDer Dateiname ist: $_out_csv_file" --backtitle "$_WHIPTAIL_BACK"   8 78
+	unset _out_csv_file _out_csv_header_speed _out_csv_speed _out_csv_header_wlan _out_csv_wlan _date_csv
+	func_end
+}
 
 ##########
 # Abruch #
@@ -320,12 +376,11 @@ while getopts "o:w:ihs" opt; do
 		w) _HW_WLAN="$OPTARG";;
 		o) _out_form="$OPTARG";;
 		\?) echo " Unbekannte Option" >&2; echo ""; echo 'Mehr Informationen via "./wlan_info.sh -h"'; exit 1;;
-		:) echo "Keine Option angegeben" >&2; echo ""; func_help; exit 1;;
 		*) func_help; exit 1;;
 	esac
 done
 
-if [ ! -z "$_HW_WLAN" ] # Überprüfen ob eine Netzwerkarte angegeben ist
+if [ -n "$_HW_WLAN" ] # Überprüfen ob eine Netzwerkarte angegeben ist
 then
 	_hw_wlan_test=$(grep "$_HW_WLAN" /proc/net/wireless) # Netzwerkarte suche
 	if [ "$_hw_wlan_test" = "" ] # Feedback über nicht gefunden Netzwerkarte
@@ -354,5 +409,5 @@ fi
 case $_out_form in # Entscheidung der Ausgabe
 	screen) func_out_screen ;;
 	html) echo "HTML Ausgabe";;
-	csv) echo "csv Ausgabe";;
+	csv) func_out_csv ;;
 esac
