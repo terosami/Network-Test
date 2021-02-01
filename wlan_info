@@ -6,7 +6,7 @@
 # Authors:     Gregor Holzfeind, Claudia Näf, #
 #              Kai Schmide, Dritan Shehu      #
 # Copy-Right:  GNU-GPLv3                      #
-# Version:     0.7.1                          #
+# Version:     0.7.2                          #
 ###############################################
 
 ################
@@ -18,7 +18,7 @@
 ##################
 
 _HW_WLAN="" # Hardwarename des WLAN-Modul
-_WHIPTAIL_BACK="WLAN-Analyser v0.7.1" # Backtitel Whiptail"
+_WHIPTAIL_BACK="WLAN-Analyser v0.7.2" # Backtitel Whiptail"
 _DATA="" # aktuelles Datum
 _DATE_FILE="" # Datum für Dateien
 TERM=linux # Einstellung für whiptail
@@ -133,16 +133,16 @@ function func_precheck() {
 # Begleiteter Modus #
 #####################
 
-function func_start () { #Sammlung der Infos für die Messung
+function func_start () { 
 	whiptail --title "Willkommen" --backtitle "$_WHIPTAIL_BACK" \
 	--infobox "Es werden nun verschiede Information für die Bedinung abgefragt." 8 78 # Willkommensbildschirm
 	sleep 3
 	local _number_wireless=$(wc -l /proc/net/wireless | awk '{ print $1 }') #WLAN Antennen ermitteln
 	if [ "$_number_wireless" -ge 4 ]
 	then
-		echo "auswahl"
+		echo "auswahl" # Auswahl der Netzwerkarte, derzeit noch nicht Realisiert
 	else
-		_HW_WLAN=$(sed -n '3p' /proc/net/wireless | awk '{ print $1 }' | cut -d":" -f1)
+		_HW_WLAN=$(sed -n '3p' /proc/net/wireless | awk '{ print $1 }' | cut -d":" -f1) # WLAN-Adapter auswählen
 	fi
 	unset _number_wireless
 	# Abfrage eines Speedtest
@@ -155,12 +155,35 @@ function func_start () { #Sammlung der Infos für die Messung
 			_func_speed="false"
 		fi
 	fi
-	_out_form=$(whiptail  --title "Ausgabe" --backtitle "$_WHIPTAIL_BACK"  --radiolist "Bitte Wählen Sie eine Ausgabe" 20 78 3 "screen" "Auf dem Bildschirm" ON   "html" "html-Datei" OFF "csv" "CSV-Datei" OFF 3>&1 1>&2 2>&3)
-	exitstatus=$?
-    if [ $exitstatus != 0 ]
-    then
-        func_cancel
-    fi
+	# Abfrage eines Monitoring
+	if (whiptail --title "Monitor" --backtitle "$_WHIPTAIL_BACK" --yesno "Soll ein Monitoring durchführt werden?." 8 78)
+	then
+		local _out_csv_file_tmp=$(whiptail --title "Monitor" --backtitle "$_WHIPTAIL_BACK" --inputbox "Wie ist der Dateiname der CSV-Datei" 8 39 $PWD/monitor.csv 3>&1 1>&2 2>&3)
+		exitstatus=$?
+		if [ $exitstatus != 0 ]
+		then
+			func_cancel
+		fi
+		local _script_tmp="$PWD/${0##*/}" # Nanme und Pfad des Script
+		if [ "$_func_speed" = "true" ]
+		then
+			local _crontab_tmp="*/5 * * * * bash $_script_tmp -w $_HW_WLAN -m $_out_csv_file_tmp -o csv -s" # Crontab mit Speed
+		else
+			local _crontab_tmp="*/5 * * * * bash $_script_tmp -w $_HW_WLAN -m $_out_csv_file_tmp -o csv" # Crontab ohne Speed
+		fi
+		echo "$_crontab_tmp" > $PWD/crontab.exmp
+		whiptail --title "Monitor Crontab" --backtitle "$_WHIPTAIL_BACK" \
+		--msgbox "Als Crontab für das Monitoring muss folgendes Eingetragen werden (alle 5 Minuten):\n$_crontab_tmp\n\nDiese Ausgabe ist auch in der Datei: $PWD/crontab.exmp vorhanden" 13 78 # Crontab-Info
+		unset _script_tmp _crontab_tmp
+		func_end
+	else
+		_out_form=$(whiptail  --title "Ausgabe" --backtitle "$_WHIPTAIL_BACK"  --radiolist "Bitte Wählen Sie eine Ausgabe" 20 78 3 "screen" "Auf dem Bildschirm" ON   "html" "html-Datei" OFF "csv" "CSV-Datei" OFF 3>&1 1>&2 2>&3) # Abfrage des Ausgabemedium
+		exitstatus=$?
+		if [ $exitstatus != 0 ]
+		then
+			func_cancel
+		fi
+	fi
 	func_info
 }
 
@@ -183,6 +206,7 @@ function func_info() {
 	_wlan_ap=$(iwgetid -ar "$_HW_WLAN" ) # Access Point ermitteln
 	_wlan_speed=$(iwconfig "$_HW_WLAN" | grep "Bit" | awk '{ print $2 " " $3 }' | cut -d"=" -f2) # Geschwindkeit ermitteln
 	local _wlan_gen_tmp=$(iw dev "$_HW_WLAN" link | grep "tx" | awk '{ print $5 }') #Hilfestellung zu Standart ermittlung
+	# Erkennung der WLAN Generation
 	if [ "$_wlan_gen_tmp" = "MCS" ]
 	then
 		_wlan_generation="N"
@@ -193,6 +217,7 @@ function func_info() {
 		_wlan_generation="Legacy"
 	fi
 	unset _wlan_gen_tmp
+	# Ermittlung der zusätzlichen WLAN-Eigenschaften
 	if [ "$_wlan_generation" == "N" ] || [ "$_wlan_generation" == "AC/AX" ]
 	then
 		_wlan_mcs=$(iw dev "$_HW_WLAN" link | grep "tx" | awk '{ print $6 }')
@@ -213,29 +238,48 @@ function func_info() {
 ################
 
 function func_speed() {
-	whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
-	--gauge "Geschwindigkeitstest 1 von 5 wird durchführt" 8 78 0 &
+	if [ "$_out_form" = "screen" ] || [ "$_func_inter" = "true" ] # Info nur bei Screen und interaktive anzeigen
+	then
+		whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
+		--gauge "Geschwindigkeitstest 1 von 5 wird durchführt" 8 78 0 &
+	fi
 	wget -O /dev/null "https://speed.hetzner.de/100MB.bin" --bind-address "$_wlan_ip" 2> speed1.$$ # Speedmessung 1
-	whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
-	--gauge "Geschwindigkeitstest 2 von 5 wird durchführt" 8 78 20 &
+	clear
+	if [ "$_out_form" = "screen" ] || [ "$_func_inter" = "true" ] # Info nur bei Screen und interaktive anzeigen
+	then
+		whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
+		--gauge "Geschwindigkeitstest 2 von 5 wird durchführt" 8 78 20 &
+	fi
 	wget -O /dev/null "http://speedtest.tele2.net/100MB.zip" --bind-address "$_wlan_ip" 2> speed2.$$ # Speedmessung 2
-	whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
-	--gauge "Geschwindigkeitstest 3 von 5 wird durchführt" 8 78 40 &
+	clear
+	if [ "$_out_form" = "screen" ] || [ "$_func_inter" = "true" ] # Info nur bei Screen und interaktive anzeigen
+	then
+		whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
+		--gauge "Geschwindigkeitstest 3 von 5 wird durchführt" 8 78 40 &
+	fi
 	wget -O /dev/null "http://speedtest.london.linode.com/100MB-london.bin" --bind-address "$_wlan_ip" 2> speed3.$$ # Speedmessung 3
+	clear
 	local _speed1_nr=$(tail -n2 speed1.$$ | head -n1  | cut -d"(" -f2 | awk '{ print $1 }')
 	local _speed2_nr=$(tail -n2 speed2.$$ | head -n1  | cut -d"(" -f2 | awk '{ print $1 }')
 	local _speed3_nr=$(tail -n2 speed3.$$ | head -n1  | cut -d"(" -f2 | awk '{ print $1 }')
 	_speed_rel=$(echo "scale=2 ; ($_speed1_nr + $_speed2_nr + $_speed3_nr) / 3 "| bc ) # Berechnung Durschnittsgeschwindigkeit
-	whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
-	--gauge "Geschwindigkeitstest 4 von 5 wird durchführt" 8 78 60 &
+	if [ "$_out_form" = "screen" ] || [ "$_func_inter" = "true" ] # Info nur bei Screen und interaktive anzeigen
+	then
+		whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
+		--gauge "Geschwindigkeitstest 4 von 5 wird durchführt" 8 78 60 &
+	fi
 	_ping=$(ping -I "$_HW_WLAN" 8.8.8.8 -c4 | grep "rtt" | cut -d"/" -f5)
 	if [ ! -f "$_speed_dummy" ] # Überprüfung ob die Dummy-Datei vorhanden ist
 	then
 		dd if=/dev/zero of="$_speed_dummy" bs=1M count=100 # Dummy-Datei erstellen
 	fi
-	whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
-	--gauge "Geschwindigkeitstest 5 von 5 wird durchführt" 8 78 80 &
+	if [ "$_out_form" = "screen" ] || [ "$_func_inter" = "true" ] # Info nur bei Screen und interaktive anzeigen
+	then
+		whiptail --title "Speedmessung" --backtitle "$_WHIPTAIL_BACK" \
+		--gauge "Geschwindigkeitstest 5 von 5 wird durchführt" 8 78 80 &
+	fi
 	curl -T "$_speed_dummy" ftp://speedtest.tele2.net/upload/ --silent --write-out '%{time_starttransfer},%{time_total}' --interface "$_HW_WLAN" > speed4.$$ # Uploadtest
+	clear
 	local _speed_up_start=$(cut -d"," -f1 speed4.$$)
 	local _speed_up_end=$(cut -d"," -f2 speed4.$$)
 	local _speed_up_total=$(echo "scale=2; $_speed_up_end - $_speed_up_start"| bc)
@@ -278,20 +322,20 @@ Ausgeführt am $_DATA" 25 78
 ####################
 
 function func_out_csv() {
-	if [ "$_func_monitor" = "false" ]
+	if [ "$_func_monitor" = "false" ] # Überprüfen ob die Monitor-Modus ausgewählt ist.
 	then
-		_out_csv_file=$(date +"%Y_%m_%d_%H_%M.csv")
+		_out_csv_file=$(date +"%Y_%m_%d_%H_%M.csv") # Datei bei einem nicht Monitor-Modus
 	fi
-	local _out_csv_speed="false"
-	local _out_csv_wlan="false"
-	if [ ! -f "$_out_csv_file" ]
+	local _out_csv_speed="false" # Setzen der Speedausgabe beim CSV
+	local _out_csv_wlan="false" # Setzen der Zusätzlichen WLAN-Eigenschaften beim CSV
+	if [ ! -f "$_out_csv_file" ] # Überprüfen ob die CSV-Datei schon existiert
 	then
 		if [ "$_out_screen_speed" = "" ]
 		then
 			local _out_csv_header_speed=""
 			_out_csv_speed="false"
 		else
-			local _out_csv_header_speed="Downspeed;Upspeed;avg. Ping"
+			local _out_csv_header_speed="Downspeed;Upspeed;avg. Ping" # CSV Header Anpassung
 			_out_csv_speed="true"
 		fi
 		if [ "$_out_screen_wlan" = "" ]
@@ -299,26 +343,26 @@ function func_out_csv() {
 			local _out_csv_header_wlan=""
 			_out_csv_wlan="false"
 		else
-			local _out_csv_header_wlan="MCS-Wert;Guardinterval"
+			local _out_csv_header_wlan="MCS-Wert;Guardinterval" # CSV Header Anpassung
 			_out_csv_wlan="true"
 		fi
-		echo "Datum;Zeit;SSID;Band;Kanal;Kanalbreite:Signalstärke;IP-Address;Rauschen;Access Pont;max. Speed;Generation$out_csv_header_wlan;$_out_csv_header_speed" > $_out_csv_file
+		echo "Datum;Zeit;SSID;Band;Kanal;Kanalbreite:Signalstärke;IP-Address;Rauschen;Access Pont;max. Speed;Generation$out_csv_header_wlan;$_out_csv_header_speed" > $_out_csv_file # CSV-Header
 	fi
-	local _date_csv=$(date +"%d.%m.%Y;%H:%M")
-	if [ "$_out_csv_speed" = "false" ] && [ "$_out_csv_wlan" = "false" ]
+	local _date_csv=$(date +"%d.%m.%Y;%H:%M") # Datum und Uhrzeit der Messung
+	if [ "$_out_csv_speed" = "false" ] && [ "$_out_csv_wlan" = "false" ] # Ausgabe ohne Speed und Zusatzinformationen
 	then
 		echo "$_date_csv;$_wlan_ssid;$_wlan_frq;$_wlan_channel;$_wlan_channel_withd;$_wlan_signal;$_wlan_ip;$_wlan_noise dBm;$_wlan_ap;$_wlan_speed;$_wlan_generation" >> $_out_csv_file
-	elif [ "$_out_csv_speed" = "true" ] && [ "$_out_csv_wlan" = "false" ]
+	elif [ "$_out_csv_speed" = "true" ] && [ "$_out_csv_wlan" = "false" ] # Ausgabe mit Speed, ohne Zusatzinformationen
 	then
 		echo "$_date_csv;$_wlan_ssid;$_wlan_frq;$_wlan_channel;$_wlan_channel_withd;$_wlan_signal;$_wlan_ip;$_wlan_noise dBm;$_wlan_ap;$_wlan_speed;$_wlan_generation;$_speed_rel MB/s;$_speed_up MB/s;$_ping ms" >> $_out_csv_file
-	elif [ "$_out_csv_speed" = "false" ] && [ "$_out_csv_wlan" = "true" ]
+	elif [ "$_out_csv_speed" = "false" ] && [ "$_out_csv_wlan" = "true" ] # Ausgabe ohne Speed, mit Zusatzinformationen
 	then
 		echo "$_date_csv;$_wlan_ssid;$_wlan_frq;$_wlan_channel;$_wlan_channel_withd;$_wlan_signal;$_wlan_ip;$_wlan_noise dBm;$_wlan_ap;$_wlan_speed;$_wlan_generation;$_wlan_mcs;$_wlan_gi" >> $_out_csv_file
-	elif [ "$_out_csv_speed" = "true" ] && [ "$_out_csv_wlan" = "true" ]
+	elif [ "$_out_csv_speed" = "true" ] && [ "$_out_csv_wlan" = "true" ] # Ausgabe mit Speed und Zusatzinformationen
 	then
 		echo "$_date_csv;$_wlan_ssid;$_wlan_frq;$_wlan_channel;$_wlan_channel_withd;$_wlan_signal;$_wlan_ip;$_wlan_noise dBm;$_wlan_ap;$_wlan_speed;$_wlan_generation;$_wlan_mcs;$_wlan_gi;$_speed_rel MB/s;$_speed_up MB/s;$_ping ms" >> $_out_csv_file
 	fi
-	if [ "$_func_monitor" = "false" ]
+	if [ "$_func_monitor" = "false" ] # Endmeldung im Nicht-Monitor-Modus
 	then
 		whiptail --msgbox "Die CSV-Datei wurde geschrieben\nDer Dateiname ist: $_out_csv_file" --backtitle "$_WHIPTAIL_BACK"   8 78
 	fi
@@ -369,7 +413,7 @@ function func_end() {
 	unset _func_inter _func_speed 
 	unset _out_screen_wlan _out_screen_speed _out_form _out_csv_file _func_monitor
 	unset _speed_rel
-	clear
+	#clear
 	exit
 }
 
@@ -425,5 +469,5 @@ fi
 case $_out_form in # Entscheidung der Ausgabe
 	screen) func_out_screen ;;
 	html) echo "HTML Ausgabe";;
-	csv) func_out_csv ;;
+	csv) func_out_csv;;
 esac
