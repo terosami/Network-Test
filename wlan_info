@@ -6,7 +6,7 @@
 # Authors:     Gregor Holzfeind, Claudia Näf, #
 #              Kai Schmide, Dritan Shehu      #
 # Copy-Right:  GNU-GPLv3                      #
-# Version:     0.7.0                          #
+# Version:     0.7.1                          #
 ###############################################
 
 ################
@@ -18,7 +18,7 @@
 ##################
 
 _HW_WLAN="" # Hardwarename des WLAN-Modul
-_WHIPTAIL_BACK="WLAN-Analyser v0.7.0" # Backtitel Whiptail"
+_WHIPTAIL_BACK="WLAN-Analyser v0.7.1" # Backtitel Whiptail"
 _DATA="" # aktuelles Datum
 _DATE_FILE="" # Datum für Dateien
 TERM=linux # Einstellung für whiptail
@@ -42,14 +42,16 @@ _wlan_noise="" # Hintergrundrauschen
 # Options Variabel #
 ####################
 _func_inter="false" # Interaktive Durchführung
-_func_speed="false" # Speedmessung
-_out_form="screen" # Ausgabe der Resultate
+_func_speed="false" # Speedmessung 
+_func_monitor="false" # Monitor Funktion
 
 ###################
 # Output Variabel #
 ###################
+_out_form="screen" # Ausgabe der Resultate
 _out_screen_wlan="" # Ausgabe für Screen WLAN
 _out_screen_speed="" # Ausgabe für Screen Speed
+_out_csv_file="" # Ausgabedatei CSV
 
 #####################
 # Sonstige Variabel #
@@ -276,24 +278,29 @@ Ausgeführt am $_DATA" 25 78
 ####################
 
 function func_out_csv() {
-	local _out_csv_file=$(date +"%Y_%m_%d_%H_%M.csv")
-	if [ -n "$_out_csv_file" ]
+	if [ "$_func_monitor" = "false" ]
+	then
+		_out_csv_file=$(date +"%Y_%m_%d_%H_%M.csv")
+	fi
+	local _out_csv_speed="false"
+	local _out_csv_wlan="false"
+	if [ ! -f "$_out_csv_file" ]
 	then
 		if [ "$_out_screen_speed" = "" ]
 		then
 			local _out_csv_header_speed=""
-			local _out_csv_speed="false"
+			_out_csv_speed="false"
 		else
 			local _out_csv_header_speed="Downspeed;Upspeed;avg. Ping"
-			local _out_csv_speed="true"
+			_out_csv_speed="true"
 		fi
 		if [ "$_out_screen_wlan" = "" ]
 		then
 			local _out_csv_header_wlan=""
-			local _out_csv_wlan="false"
+			_out_csv_wlan="false"
 		else
 			local _out_csv_header_wlan="MCS-Wert;Guardinterval"
-			local _out_csv_wlan="true"
+			_out_csv_wlan="true"
 		fi
 		echo "Datum;Zeit;SSID;Band;Kanal;Kanalbreite:Signalstärke;IP-Address;Rauschen;Access Pont;max. Speed;Generation$out_csv_header_wlan;$_out_csv_header_speed" > $_out_csv_file
 	fi
@@ -311,7 +318,10 @@ function func_out_csv() {
 	then
 		echo "$_date_csv;$_wlan_ssid;$_wlan_frq;$_wlan_channel;$_wlan_channel_withd;$_wlan_signal;$_wlan_ip;$_wlan_noise dBm;$_wlan_ap;$_wlan_speed;$_wlan_generation;$_wlan_mcs;$_wlan_gi;$_speed_rel MB/s;$_speed_up MB/s;$_ping ms" >> $_out_csv_file
 	fi
-	whiptail --msgbox "Die CSV-Datei wurde geschrieben\nDer Dateiname ist: $_out_csv_file" --backtitle "$_WHIPTAIL_BACK"   8 78
+	if [ "$_func_monitor" = "false" ]
+	then
+		whiptail --msgbox "Die CSV-Datei wurde geschrieben\nDer Dateiname ist: $_out_csv_file" --backtitle "$_WHIPTAIL_BACK"   8 78
+	fi
 	unset _out_csv_file _out_csv_header_speed _out_csv_speed _out_csv_header_wlan _out_csv_wlan _date_csv
 	func_end
 }
@@ -343,6 +353,7 @@ function func_help() {
 	echo "OPTION"
 	echo "  -h  Hilfe, dieser Text"
 	echo "  -i  Interaktive Version"
+	echo '  -m  [FILENAME], Monitor-Modus mit CSV-File (-o csv)'
 	echo '  -o  [screen (Default), html, csv], Ausgabe des Ergebniss'
 	echo "  -s  Speedmessung nach Extern durchführen"
 	echo "  -w  [Adaptername], WLAN-Adapter festlegen"
@@ -355,8 +366,8 @@ function func_help() {
 function func_end() {
 	unset _HW_WLAN _WHIPTAIL_BACK _DATA _DATE_FILE
 	unset _wlan_ssid _wlan_channel _wlan_channel_withd _wlan_signal _wlan_ap _wlan_speed _wlan_generation _wlan_mcs _wlan_gi
-	unset _func_inter _func_speed _out_form
-	unset _out_screen_wlan _out_screen_speed
+	unset _func_inter _func_speed 
+	unset _out_screen_wlan _out_screen_speed _out_form _out_csv_file _func_monitor
 	unset _speed_rel
 	clear
 	exit
@@ -368,10 +379,11 @@ function func_end() {
 
 func_precheck
 
-while getopts "o:w:ihs" opt; do
+while getopts "o:w:m:ihs" opt; do
 	case ${opt} in
 		h) func_help; exit 1;;
 		i) _func_inter="true";;
+		m) _out_csv_file="$OPTARG"; _func_monitor="true";;
 		s) _func_speed="true";;
 		w) _HW_WLAN="$OPTARG";;
 		o) _out_form="$OPTARG";;
@@ -397,11 +409,15 @@ fi
 if [ "$_func_inter" == "true" ] # Überprüfen ob interaktive Geführt werden soll
 then
 	func_start
+elif [ "$_func_monitor" == "true" ] && [ [ "$_out_form" == "html" ] || [ "$_out_form" == "screen" ] || [ "$_out_form" == "" ]] # Überprüfen für die Monitor Funktion
+then
+	whiptail --msgbox "Es wurde der Monitor-Modus ausgewählt ohne CSV-Export\nBitte um -o csv ergänzen" --backtitle "$_WHIPTAIL_BACK"   8 78
+	func_end
 else
 	func_info
 fi
 
-if [ "$_func_speed" == "true" ] # Überprüfen ob ein Speedtest durchführt werden soll.
+if [ "$_func_speed" = "true" ] # Überprüfen ob ein Speedtest durchführt werden soll.
 then
 	func_speed
 fi
